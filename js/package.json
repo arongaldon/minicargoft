@@ -1,0 +1,18 @@
+{
+  "name": "minicargoft",
+  "version": "1.0.0",
+  "description": "A web-based Minecraft clone",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "simplex-noise": "^4.0.1",
+    "three": "^0.163.0"
+  },
+  "devDependencies": {
+    "vite": "^5.2.0"
+  }
+}

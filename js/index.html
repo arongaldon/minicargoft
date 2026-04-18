@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minicargoft - Web Voxel Game</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!-- Game Canvas -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Crosshair -->
+    <div id="crosshair">+</div>
+
+    <!-- UI Overlay for menus -->
+    <div id="ui-container">
+      <div id="blocker">
+        <div id="instructions">
+          <span style="font-size:36px">Minicargoft</span>
+          <br /><br />
+          Click to play
+          <br /><br />
+          (W, A, S, D = Move, SPACE = Jump, MOUSE = Look around)<br/>
+          (Left Click = Break block, Right Click = Place block)
+        </div>
+      </div>
+    </div>
+
+    <!-- Entry point for JS -->
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
