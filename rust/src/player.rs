@@ -3,11 +3,14 @@ use bevy::window::CursorGrabMode;
 use bevy::input::mouse::MouseMotion;
 use crate::world::VoxelWorld;
 
+#[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
+pub struct PlayerSystemSet;
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_player)
+        app.add_systems(Startup, setup_player.in_set(PlayerSystemSet))
            .add_systems(Update, (player_move, cursor_grab));
     }
 }
@@ -19,6 +22,8 @@ pub struct Player {
     pub jump_force: f32,
     pub gravity: f32,
     pub on_ground: bool,
+    pub yaw: f32,
+    pub pitch: f32,
 }
 
 fn setup_player(mut commands: Commands, world: Res<VoxelWorld>) {
@@ -42,6 +47,8 @@ fn setup_player(mut commands: Commands, world: Res<VoxelWorld>) {
             jump_force: 8.0,
             gravity: 25.0,
             on_ground: false,
+            yaw: 0.0,
+            pitch: 0.0,
         },
     ));
 }
@@ -64,6 +71,30 @@ fn cursor_grab(
     }
 }
 
+fn check_collision(pos: Vec3, world: &VoxelWorld) -> bool {
+    let radius = 0.28;
+    let camera_offset = 1.6;
+    let foot_y = pos.y - camera_offset;
+    
+    // Check points to cover the player's height
+    // We start at 0.4 to avoid getting snagged on the block we are standing on
+    for y_offset in [0.4, 0.9, 1.4] {
+        let check_y = (foot_y + y_offset + 0.5).floor() as i32;
+        
+        for x_offset in [-radius, radius] {
+            for z_offset in [-radius, radius] {
+                let check_x = (pos.x + x_offset + 0.5).floor() as i32;
+                let check_z = (pos.z + z_offset + 0.5).floor() as i32;
+                
+                if world.get_block(check_x, check_y, check_z).is_some() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn player_move(
     time: Res<Time>,
     mut mouse_motion: EventReader<MouseMotion>,
@@ -77,22 +108,28 @@ fn player_move(
         return;
     }
 
-    let delta = time.delta_seconds();
-    for (mut transform, mut player) in query.iter_mut() {
-        // Look
-        let mut mouse_delta = Vec2::ZERO;
+    let delta = time.delta_seconds().min(0.05);
+    
+    let mut mouse_delta = Vec2::ZERO;
+    if time.elapsed_seconds() > 0.5 {
         for ev in mouse_motion.read() {
             mouse_delta += ev.delta;
         }
+    } else {
+        // Still clear the events during warmup so they don't pile up
+        for _ in mouse_motion.read() {}
+    }
 
+    for (mut transform, mut player) in query.iter_mut() {
+        // --- Rotation (Look) ---
         let sensitivity = 0.002;
-        let (mut yaw, mut pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
-        yaw -= mouse_delta.x * sensitivity;
-        pitch -= mouse_delta.y * sensitivity;
-        pitch = pitch.clamp(-1.5, 1.5);
-        transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+        player.yaw -= mouse_delta.x * sensitivity;
+        player.pitch -= mouse_delta.y * sensitivity;
+        player.pitch = player.pitch.clamp(-1.5, 1.5);
+        
+        transform.rotation = Quat::from_euler(EulerRot::YXZ, player.yaw, player.pitch, 0.0);
 
-        // Move
+        // --- Movement Direction ---
         let mut direction = Vec3::ZERO;
         if keys.pressed(KeyCode::KeyW) { direction.z -= 1.0; }
         if keys.pressed(KeyCode::KeyS) { direction.z += 1.0; }
@@ -100,7 +137,7 @@ fn player_move(
         if keys.pressed(KeyCode::KeyD) { direction.x += 1.0; }
 
         let current_speed = if keys.pressed(KeyCode::ShiftLeft) {
-            player.speed * 2.5
+            player.speed * 1.8
         } else {
             player.speed
         };
@@ -109,73 +146,64 @@ fn player_move(
             direction = direction.normalize();
         }
 
-        // Apply rotation to direction based on yaw only
-        let (yaw, _, _) = transform.rotation.to_euler(EulerRot::YXZ);
-        let forward = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
-        let right = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
-        let mut move_dir = forward * -direction.z + right * direction.x;
+        let forward = Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos());
+        let right = Vec3::new(player.yaw.cos(), 0.0, -player.yaw.sin());
+        let move_dir = forward * -direction.z + right * direction.x;
         
-        if move_dir != Vec3::ZERO {
-            move_dir = move_dir.normalize();
-        }
-
         player.velocity.x = move_dir.x * current_speed;
         player.velocity.z = move_dir.z * current_speed;
 
-        // Jump
+        // --- Jump ---
         if keys.pressed(KeyCode::Space) && player.on_ground {
             player.velocity.y = player.jump_force;
             player.on_ground = false;
         }
 
-        // Gravity
+        // --- Gravity ---
         player.velocity.y -= player.gravity * delta;
 
-        let check_collision = |pos: Vec3| -> bool {
-            let foot_y = pos.y - 1.6;
-            let block_x = pos.x.round() as i32;
-            let block_z = pos.z.round() as i32;
-            
-            world.get_block(block_x, foot_y.round() as i32, block_z).is_some() ||
-            world.get_block(block_x, pos.y.round() as i32, block_z).is_some()
-        };
-
-        // Apply horizontal movement separately to allow sliding
-        let mut new_pos = transform.translation;
-        new_pos.x += player.velocity.x * delta;
-        if check_collision(new_pos) {
-            new_pos.x = transform.translation.x; // Revert X
+        // --- Collision & Movement Resolution ---
+        
+        // 1. Horizontal X
+        let mut next_pos = transform.translation;
+        next_pos.x += player.velocity.x * delta;
+        if !check_collision(next_pos, &world) {
+            transform.translation.x = next_pos.x;
+        } else {
+            player.velocity.x = 0.0;
         }
 
-        new_pos.z += player.velocity.z * delta;
-        if check_collision(new_pos) {
-            new_pos.z = transform.translation.z; // Revert Z
+        // 2. Horizontal Z
+        next_pos = transform.translation;
+        next_pos.z += player.velocity.z * delta;
+        if !check_collision(next_pos, &world) {
+            transform.translation.z = next_pos.z;
+        } else {
+            player.velocity.z = 0.0;
         }
-        
-        transform.translation.x = new_pos.x;
-        transform.translation.z = new_pos.z;
 
-        // Apply vertical movement
-        transform.translation.y += player.velocity.y * delta;
-        
-        // Floor collision
-        player.on_ground = false;
-        let foot_y = transform.translation.y - 1.6;
-        let block_x = transform.translation.x.round() as i32;
-        let block_z = transform.translation.z.round() as i32;
-        let block_y = foot_y.round() as i32;
-
-        if world.get_block(block_x, block_y, block_z).is_some() {
+        // 3. Vertical Y
+        next_pos = transform.translation;
+        next_pos.y += player.velocity.y * delta;
+        if check_collision(next_pos, &world) {
             if player.velocity.y < 0.0 {
+                let foot_y = (next_pos.y - 1.6 + 0.5).floor();
+                transform.translation.y = foot_y + 0.5 + 1.6;
                 player.velocity.y = 0.0;
-                transform.translation.y = block_y as f32 + 0.5 + 1.6;
                 player.on_ground = true;
+            } else {
+                player.velocity.y = 0.0;
             }
+        } else {
+            transform.translation.y = next_pos.y;
+            let mut check_ground_pos = transform.translation;
+            check_ground_pos.y -= 0.1;
+            player.on_ground = check_collision(check_ground_pos, &world);
         }
-        
-        // Simple void reset
-        if transform.translation.y < -10.0 {
-            transform.translation.y = 20.0;
+
+        // --- Void Reset ---
+        if transform.translation.y < -30.0 {
+            transform.translation.y = 50.0;
             player.velocity.y = 0.0;
         }
     }

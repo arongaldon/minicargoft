@@ -16,6 +16,7 @@ fn main() {
         .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0))) // Black sky
         .add_plugins(world::WorldPlugin)
         .add_plugins(player::PlayerPlugin)
+        .configure_sets(Startup, player::PlayerSystemSet.after(world::WorldSystemSet))
         .add_plugins(interaction::InteractionPlugin)
         .add_systems(Startup, setup_scene)
         .run();

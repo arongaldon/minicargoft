@@ -2,12 +2,15 @@ use bevy::prelude::*;
 use noise::{NoiseFn, Simplex};
 use std::collections::HashMap;
 
+#[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
+pub struct WorldSystemSet;
+
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(VoxelWorld::new())
-           .add_systems(Startup, generate_world);
+           .add_systems(Startup, generate_world.in_set(WorldSystemSet));
     }
 }
 
